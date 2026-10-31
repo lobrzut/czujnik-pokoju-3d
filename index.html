@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Czujnik pokoju — wizualizacja 3D (XIAO + LD2450)</title>
+<style>
+  :root { --bg:#0c0f14; --panel:#161b24; --acc:#3ddc97; --warn:#ffb454; --txt:#e6edf3; --dim:#8b97a7; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--txt);
+    font-family:system-ui,Segoe UI,Roboto,sans-serif; overflow:hidden; touch-action:none; }
+  #app { position:fixed; inset:0; }
+  .panel { position:fixed; background:rgba(22,27,36,.94); border:1px solid #2a313d;
+    border-radius:12px; backdrop-filter:blur(8px); box-shadow:0 8px 30px rgba(0,0,0,.45); }
+
+  /* top bar */
+  #top { top:10px; left:50%; transform:translateX(-50%); display:flex; gap:8px; padding:7px 9px; z-index:30; }
+  #top b { color:var(--acc); font-size:13px; align-self:center; padding:0 6px; }
+
+  /* description / accordion */
+  #desc { top:60px; left:12px; width:300px; max-height:calc(100vh - 150px); overflow:auto; padding:6px 14px 10px; z-index:20; }
+  #desc h1 { font-size:14px; color:var(--acc); margin:10px 2px 6px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:7px; vertical-align:middle; }
+  .acc-item { border-bottom:1px solid #232b36; }
+  .acc-head { cursor:pointer; padding:9px 2px; font-weight:600; font-size:13px;
+    display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .acc-head .ic { color:var(--dim); transition:.2s; }
+  .acc-item.open .acc-head .ic { transform:rotate(90deg); }
+  .acc-body { max-height:0; overflow:hidden; transition:max-height .28s ease; }
+  .acc-item.open .acc-body { max-height:340px; }
+  .acc-body .in { padding:0 2px 11px 19px; font-size:12px; color:var(--dim); line-height:1.55; }
+  .acc-body b { color:var(--txt); }
+  .tag { display:inline-block; background:#202a36; color:#9fb3c8; border-radius:5px; padding:1px 6px; font-size:11px; margin:3px 4px 0 0; }
+
+  /* live status */
+  #status { top:60px; right:12px; width:200px; padding:13px 15px; z-index:20; }
+  #status h2, #calc h2 { font-size:11px; margin:0 0 9px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; }
+  .row { display:flex; justify-content:space-between; align-items:center; margin:6px 0; font-size:13px; }
+  .row .k { color:var(--dim); }
+  .val { font-weight:700; }
+  .pill { padding:2px 10px; border-radius:20px; font-size:12px; font-weight:700; }
+  .pill.yes { background:rgba(61,220,151,.18); color:var(--acc); }
+  .pill.no  { background:rgba(255,90,90,.15); color:#ff7b7b; }
+  #calc { top:300px; right:12px; width:235px; padding:13px 15px; display:none; z-index:20; }
+
+  /* bottom controls */
+  #ctrl { bottom:12px; left:50%; transform:translateX(-50%); display:flex; gap:7px;
+    padding:9px 11px; max-width:96vw; overflow-x:auto; z-index:25; }
+  button { background:#222a36; color:var(--txt); border:1px solid #333d4c; border-radius:8px;
+    padding:8px 12px; font-size:13px; cursor:pointer; transition:.15s; white-space:nowrap; flex:0 0 auto; }
+  button:hover { background:#2c3645; border-color:var(--acc); }
+  button.on { background:var(--acc); color:#06210f; border-color:var(--acc); font-weight:600; }
+
+  .label { background:rgba(12,15,20,.85); border:1px solid #333d4c; border-radius:6px;
+    padding:3px 7px; font-size:11px; color:var(--txt); white-space:nowrap; pointer-events:none; }
+  .label.acc { border-color:var(--acc); color:var(--acc); }
+  .label.dimL { border-color:var(--warn); color:var(--warn); font-weight:700; }
+  .hidden { display:none !important; }
+
+  /* ===== MOBILE (pion) ===== */
+  @media (max-width:760px) {
+    #top { top:8px; width:calc(100% - 16px); justify-content:center; flex-wrap:wrap; }
+    #top b { width:100%; text-align:center; padding:2px 0 4px; }
+    #desc { top:96px; left:8px; right:8px; width:auto; max-height:62vh; }
+    #status { top:96px; left:8px; right:8px; width:auto; }
+    #calc { top:auto; bottom:74px; left:8px; right:8px; width:auto; }
+    #ctrl { bottom:8px; max-width:calc(100% - 12px); justify-content:flex-start; }
+    button { padding:9px 13px; font-size:13px; }
+    .label { font-size:10px; padding:2px 5px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="top" class="panel">
+  <b>Czujnik pokoju — XIAO + LD2450</b>
+  <button id="tDesc" class="on">ℹ Moduły</button>
+  <button id="tStatus" class="on">📊 Status</button>
+</div>
+
+<!-- ACCORDION: opisy modułów -->
+<div id="desc" class="panel">
+  <h1>Moduły i funkcje</h1>
+
+  <div class="acc-item open">
+    <div class="acc-head"><span><span class="sw" style="background:#2d6cdf"></span>LD2450 — radar 24 GHz</span><span class="ic">▸</span></div>
+    <div class="acc-body"><div class="in">
+      <b>Serce projektu.</b> "Widzi" ludzi falą mm — ruch i <b>osoby nieruchome</b>. Liczy do 3 osób, podaje <b>pozycję X/Y</b> i 3 strefy. To on wykrywa, nie WiFi.
+      <div><span class="tag">~6 m</span><span class="tag">±60°</span><span class="tag">UART 256000</span><span class="tag">ESPHome ld2450</span></div>
+    </div></div>
+  </div>
+
+  <div class="acc-item">
+    <div class="acc-head"><span><span class="sw" style="background:#222;border:1px solid #666"></span>XIAO ESP32S3 Plus — mózg</span><span class="ic">▸</span></div>
+    <div class="acc-body"><div class="in">
+      ESP32-S3, WiFi 2.4 GHz (<b>tylko łączność</b> do Home Assistant, nie sensing). USB-C, wbudowane ładowanie ogniwa, 16 MB. Spina wszystko, działa lokalnie w ESPHome.
+      <div><span class="tag">USB-C</span><span class="tag">WiFi</span><span class="tag">I2C+UART</span></div>
+    </div></div>
+  </div>
+
+  <div class="acc-item">
+    <div class="acc-head"><span><span class="sw" style="background:#7b3fe4"></span>AHT20 + BMP280 — klimat</span><span class="ic">▸</span></div>
+    <div class="acc-body"><div class="in">
+      Temperatura, wilgotność, ciśnienie. Tani combo (~10 zł), I2C. <b>Wymaga wentylacji</b> w obudowie, z dala od XIAO (inaczej zawyży temp).
+      <div><span class="tag">I2C 0x38/0x77</span></div>
+    </div></div>
+  </div>
+
+  <div class="acc-item">
+    <div class="acc-head"><span><span class="sw" style="background:#1e9e8a"></span>BH1750 — światło (lux)</span><span class="ic">▸</span></div>
+    <div class="acc-body"><div class="in">
+      Natężenie światła. Automatyka "ciemno + obecność → włącz światło". I2C, potrzebuje małego okienka w spodzie.
+      <div><span class="tag">I2C 0x23</span></div>
+    </div></div>
+  </div>
+
+  <div class="acc-item">
+    <div class="acc-head"><span><span class="sw" style="background:#1f7a48"></span>Backup: 2× 18650 + UPS (opcja)</span><span class="ic">▸</span></div>
+    <div class="acc-body"><div class="in">
+      Podtrzymanie na <b>zanik prądu</b> (~20 h). Moduł <b>UPS load-sharing</b> daje stałe 5 V: USB ładuje ogniwa i zasila, a przy zaniku płynnie przełącza na ogniwa. <b>Modułowa baza</b> — doklejasz tylko gdy chcesz backup.
+      <div><span class="tag">opcjonalne</span><span class="tag">5V out</span></div>
+    </div></div>
+  </div>
+
+  <div class="acc-item">
+    <div class="acc-head"><span>🔌 Jak podpiąć backup (analiza)</span><span class="ic">▸</span></div>
+    <div class="acc-body"><div class="in">
+      <b>Problem:</b> radar to 5 V, a pin 5 V XIAO żyje tylko z USB.<br>
+      <b>Rozwiązanie:</b> moduł UPS 18650 → stałe <b>5 V OUT</b> zasila CAŁY moduł (XIAO+radar+czujniki). USB-C IN ładuje + zasila; zanik → z ogniw.<br>
+      <b>Status w HA:</b> pin PG/charging modułu → GPIO XIAO (<i>sieć/bateria</i>); napięcie ogniwa przez dzielnik → ADC (<i>% baterii</i>).<br>
+      <b>Modułowo:</b> moduł czujnika ma wejście <b>5V·GND·PG·Vbat</b>. Baza bez baterii = USB-C→5V. Baza z backupem = USB-C→UPS→5V. Wymiana bazy = decyzja o backupie.
+    </div></div>
+  </div>
+</div>
+
+<!-- LIVE STATUS -->
+<div id="status" class="panel">
+  <h2>Home Assistant — na żywo</h2>
+  <div class="row"><span class="k">Obecność</span><span id="sPres" class="pill no">BRAK</span></div>
+  <div class="row"><span class="k">Aktywna strefa</span><span id="sZone" class="val">—</span></div>
+  <div class="row"><span class="k">Liczba osób</span><span id="sCnt" class="val">0</span></div>
+  <div class="row"><span class="k">Pozycja X / Y</span><span id="sXY" class="val">— / —</span></div>
+  <div class="row"><span class="k">Temp / Wilg</span><span class="val">22.4° / 41%</span></div>
+  <div class="row"><span class="k">Lux</span><span class="val">137</span></div>
+</div>
+
+<!-- BACKUP CALC -->
+<div id="calc" class="panel">
+  <h2 style="color:var(--warn)">🔋 Backup — ile wytrzyma</h2>
+  <div class="row"><span class="k">Pobór ciągły</span><span class="val">~0.8 W</span></div>
+  <div class="row"><span class="k">2× 18650 (3000mAh)</span><span class="val">~16 Wh*</span></div>
+  <div class="row"><span class="k">⏱ 2 ogniwa</span><span class="val" style="color:var(--acc)">~20 h</span></div>
+  <div class="row"><span class="k">⏱ 1 ogniwo</span><span class="val">~10 h</span></div>
+  <div style="color:var(--dim);margin-top:6px;font-size:11px">*po stratach boost. Pokrywa każdy normalny blackout. To BACKUP, nie zasilanie główne.</div>
+</div>
+
+<!-- CONTROLS -->
+<div id="ctrl" class="panel">
+  <button id="bDemo" class="on">▶ Demo</button>
+  <button id="bShell" class="on">Obudowa</button>
+  <button id="bCone" class="on">Stożek</button>
+  <button id="bZones" class="on">Strefy</button>
+  <button id="bDims">Wymiary</button>
+  <button id="bBatt">🔋 Backup</button>
+  <button id="bVent">Wentylacja</button>
+  <button id="bLabels" class="on">Opisy 3D</button>
+  <button id="bExplode">Rozłóż</button>
+  <button id="bReset">Reset</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const app=document.getElementById('app');
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0c0f14);
+scene.fog=new THREE.Fog(0x0c0f14,280,520);
+
+const camera=new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 3000);
+const CAM0=new THREE.Vector3(100,58,130); camera.position.copy(CAM0);
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.0;
+app.appendChild(renderer.domElement);
+
+const pmrem=new THREE.PMREMGenerator(renderer);
+scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
+
+const lblR=new CSS2DRenderer(); lblR.setSize(innerWidth,innerHeight);
+lblR.domElement.style.position='absolute'; lblR.domElement.style.top='0';
+lblR.domElement.style.pointerEvents='none'; app.appendChild(lblR.domElement);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.target.set(0,-30,0); controls.maxDistance=420;
+
+scene.add(new THREE.AmbientLight(0xffffff,.35));
+const d1=new THREE.DirectionalLight(0xffffff,1.6); d1.position.set(60,120,70); d1.castShadow=true;
+d1.shadow.mapSize.set(2048,2048);
+const sc=d1.shadow.camera; sc.left=-170;sc.right=170;sc.top=170;sc.bottom=-170;sc.near=10;sc.far=420; d1.shadow.bias=-0.0004;
+scene.add(d1);
+scene.add(new THREE.DirectionalLight(0x88aaff,.3).translateX(-60).translateY(-10));
+
+function pcb(w,h,d,color,metal=.2,rough=.55){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshStandardMaterial({color,roughness:rough,metalness:metal})); m.castShadow=true; return m;
+}
+function makeLabel(t,x,y,z,cls=''){const el=document.createElement('div');el.className='label '+cls;el.textContent=t;
+  const o=new CSS2DObject(el);o.position.set(x,y,z);return o;}
+const G={shell:[],cone:[],labels:[],dims:[],zones:[]}; const explodable=[];
+
+// ENCLOSURE
+const ENC={x:46,y:18,z:28};
+const shell=new THREE.Mesh(new RoundedBoxGeometry(ENC.x,ENC.y,ENC.z,5,3.5),
+  new THREE.MeshPhysicalMaterial({color:0xdfe6ef,transparent:true,opacity:.14,roughness:.15,metalness:0,transmission:.5,thickness:2,depthWrite:false,side:THREE.DoubleSide}));
+shell.castShadow=true; scene.add(shell); G.shell.push(shell);
+const fw=new THREE.Mesh(new THREE.BoxGeometry(ENC.x-5,.6,ENC.z-5),new THREE.MeshStandardMaterial({color:0xffffff,transparent:true,opacity:.22}));
+fw.position.y=-ENC.y/2+.3; scene.add(fw); G.shell.push(fw);
+
+// COMPONENTS
+const radar=pcb(40,1.6,20,0x2d6cdf); radar.position.set(0,-6.5,0); scene.add(radar);
+explodable.push({mesh:radar,base:radar.position.clone(),dir:new THREE.Vector3(0,-1,0)});
+const patchMat=new THREE.MeshStandardMaterial({color:0xd9a531,roughness:.3,metalness:.85});
+[[-12,0],[-4,0],[4,0],[12,0]].forEach(([px,pz])=>{const p=new THREE.Mesh(new THREE.BoxGeometry(5,.4,9),patchMat);
+  p.position.set(px,-7.5,pz);p.castShadow=true;scene.add(p);
+  explodable.push({mesh:p,base:p.position.clone(),dir:new THREE.Vector3(0,-1,0)});});
+G.labels.push(makeLabel('LD2450 — radar (patche w dół)',0,-10,13,'acc'));
+const xiao=pcb(23,1.6,18,0x161616,.3,.5); xiao.position.set(-6,3.5,0); scene.add(xiao);
+explodable.push({mesh:xiao,base:xiao.position.clone(),dir:new THREE.Vector3(0,1,0)});
+const usb=pcb(4,3,9,0x9aa3ad,.8,.3); usb.position.set(-6-23/2-1,3.5,0); scene.add(usb);
+explodable.push({mesh:usb,base:usb.position.clone(),dir:new THREE.Vector3(0,1,0)});
+G.labels.push(makeLabel('XIAO ESP32S3 Plus',-6,7,0));
+G.labels.push(makeLabel('USB-C',-22,3.5,0));
+const aht=pcb(13,1.2,16,0x7b3fe4); aht.position.set(14,1,6); scene.add(aht);
+explodable.push({mesh:aht,base:aht.position.clone(),dir:new THREE.Vector3(1,.4,.4)});
+G.labels.push(makeLabel('AHT20+BMP280',14,4,6));
+const bh=pcb(13,1.2,15,0x1e9e8a); bh.position.set(13,-5,-6); scene.add(bh);
+explodable.push({mesh:bh,base:bh.position.clone(),dir:new THREE.Vector3(1,-.4,-.4)});
+G.labels.push(makeLabel('BH1750 (lux)',14,-3,-8));
+G.labels.forEach(l=>scene.add(l));
+
+// DIMENSIONS
+[['46 mm',0,11,16],['28 mm',26,11,0],['18 mm',-27,0,16]].forEach(([t,x,y,z])=>{
+  const l=makeLabel(t,x,y,z,'dimL'); l.visible=false; scene.add(l); G.dims.push(l);});
+
+// CONE
+const FLOOR=-95, apexY=-8, coneH=apexY-FLOOR, coneR=coneH*Math.tan(60*Math.PI/180);
+const cone=new THREE.Mesh(new THREE.ConeGeometry(coneR,coneH,56,1,true),
+  new THREE.MeshStandardMaterial({color:0x3ddc97,transparent:true,opacity:.07,side:THREE.DoubleSide,depthWrite:false}));
+cone.position.set(0,apexY-coneH/2,0); scene.add(cone); G.cone.push(cone);
+const ce=new THREE.Mesh(new THREE.ConeGeometry(coneR,coneH,56,1,true),new THREE.MeshBasicMaterial({color:0x3ddc97,wireframe:true,transparent:true,opacity:.12}));
+ce.position.copy(cone.position); scene.add(ce); G.cone.push(ce);
+
+// FLOOR + rings
+const floor=new THREE.Mesh(new THREE.CircleGeometry(195,64),new THREE.MeshStandardMaterial({color:0x121821,roughness:.95}));
+floor.rotation.x=-Math.PI/2; floor.position.y=FLOOR; floor.receiveShadow=true; scene.add(floor);
+const grid=new THREE.GridHelper(390,39,0x2a3947,0x1a232e); grid.position.y=FLOOR+.1; scene.add(grid);
+[[47,'~2 m'],[94,'~4 m'],[141,'~6 m']].forEach(([r,t])=>{
+  const ring=new THREE.Mesh(new THREE.RingGeometry(r-.6,r+.6,80),new THREE.MeshBasicMaterial({color:0x3a5666,side:THREE.DoubleSide}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=FLOOR+.2; scene.add(ring);
+  const l=makeLabel(t,r,FLOOR+3,0); scene.add(l); G.cone.push(l);});
+
+// ZONES
+const zoneDefs=[{x:-70,col:0x2d6cdf},{x:0,col:0x7b3fe4},{x:70,col:0x1e9e8a}]; const zones=[];
+zoneDefs.forEach((z,i)=>{const m=new THREE.Mesh(new THREE.PlaneGeometry(58,150),
+  new THREE.MeshStandardMaterial({color:z.col,transparent:true,opacity:.12,emissive:z.col,emissiveIntensity:0,side:THREE.DoubleSide,depthWrite:false}));
+  m.rotation.x=-Math.PI/2; m.position.set(z.x,FLOOR+.3,0); scene.add(m); zones.push({mesh:m,x:z.x,half:29}); G.zones.push(m);
+  const l=makeLabel('Strefa '+(i+1),z.x,FLOOR+8,-70); scene.add(l); G.zones.push(l);});
+
+// PERSON
+const person=new THREE.Group();
+const body=new THREE.Mesh(new THREE.CapsuleGeometry(7,20,8,16),new THREE.MeshStandardMaterial({color:0xff9f43,roughness:.6}));
+body.position.y=18; body.castShadow=true; person.add(body);
+const head=new THREE.Mesh(new THREE.SphereGeometry(6,20,20),new THREE.MeshStandardMaterial({color:0xffc078,roughness:.5}));
+head.position.y=36; head.castShadow=true; person.add(head);
+person.position.set(0,FLOOR,0); scene.add(person);
+const trkMat=new THREE.LineBasicMaterial({color:0x3ddc97,transparent:true,opacity:.85});
+const trk=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,apexY,0),new THREE.Vector3(0,FLOOR+36,0)]),trkMat); scene.add(trk);
+const trkDot=new THREE.Mesh(new THREE.SphereGeometry(2.5,12,12),new THREE.MeshBasicMaterial({color:0x3ddc97})); scene.add(trkDot);
+
+// BACKUP battery base (opcjonalna)
+const battery=new THREE.Group(); battery.visible=false;
+const bShellM=new THREE.Mesh(new RoundedBoxGeometry(72,24,40,5,3.5),
+  new THREE.MeshPhysicalMaterial({color:0xdfe6ef,transparent:true,opacity:.12,roughness:.15,metalness:0,transmission:.5,thickness:2,depthWrite:false,side:THREE.DoubleSide}));
+bShellM.position.y=22; bShellM.castShadow=true; battery.add(bShellM);
+const cellMat=new THREE.MeshStandardMaterial({color:0x1f7a48,roughness:.45,metalness:.5});
+const capMat=new THREE.MeshStandardMaterial({color:0xb0b6bd,roughness:.3,metalness:.85});
+[-10,10].forEach(z=>{const cell=new THREE.Mesh(new THREE.CylinderGeometry(9,9,60,24),cellMat);
+  cell.rotation.z=Math.PI/2; cell.position.set(0,21,z); cell.castShadow=true; battery.add(cell);
+  [-31,31].forEach(x=>{const cap=new THREE.Mesh(new THREE.CylinderGeometry(5,5,2,16),capMat);cap.rotation.z=Math.PI/2;cap.position.set(x,21,z);battery.add(cap);});});
+const ups=pcb(26,2,18,0xb23b3b,.2,.5); ups.position.set(0,10,0); battery.add(ups);
+// złącze modułowe (4 piny) między modułem a bazą
+[-9,-3,3,9].forEach(x=>{const pin=new THREE.Mesh(new THREE.CylinderGeometry(.7,.7,5,8),patchMat);pin.position.set(x,10.5,-6);battery.add(pin);});
+scene.add(battery);
+const battLabels=[makeLabel('2× 18650 — backup',0,36,0),
+  makeLabel('moduł UPS 5V (load-sharing)',30,10,0),
+  makeLabel('złącze: 5V·GND·PG·Vbat',0,10.5,-16,'dimL'),
+  makeLabel('wenty baterii — Li-ion grzeje, NIE hermetyzuj',0,22,25,'dimL')];
+battLabels.forEach(l=>{l.visible=false;scene.add(l);});
+
+// VENTS
+const vents=new THREE.Group(); vents.visible=false;
+for(let i=0;i<3;i++){const s=new THREE.Mesh(new THREE.BoxGeometry(9,1.1,.6),new THREE.MeshStandardMaterial({color:0x05080c}));
+  s.position.set(13,1+i*2.2-2,ENC.z/2); vents.add(s);}
+const luxWin=new THREE.Mesh(new THREE.CircleGeometry(3,20),new THREE.MeshStandardMaterial({color:0x9fe7ff,emissive:0x2a6f8a,emissiveIntensity:.8,transparent:true,opacity:.75}));
+luxWin.rotation.x=-Math.PI/2; luxWin.position.set(13,-ENC.y/2+.05,-6); vents.add(luxWin);
+scene.add(vents);
+const ventLabels=[makeLabel('wenty: klimat (AHT/BMP)',15,7,16,'dimL'),
+  makeLabel('okno lux (BH1750)',13,-12,-9,'dimL'),
+  makeLabel('USB-C — wycięcie',-25,3.5,0,'dimL'),
+  makeLabel('front radaru: cienki plastik, BEZ dziury',0,-13,-14,'dimL')];
+ventLabels.forEach(l=>{l.visible=false;scene.add(l);});
+
+// ===== UI =====
+function toggle(btn,arr){const on=!btn.classList.contains('on');btn.classList.toggle('on',on);arr.forEach(o=>o.visible=on);}
+bShell.onclick=e=>toggle(e.target,G.shell);
+bCone.onclick=e=>toggle(e.target,G.cone);
+bZones.onclick=e=>toggle(e.target,G.zones);
+bDims.onclick=e=>toggle(e.target,G.dims);
+bLabels.onclick=e=>{const on=!e.target.classList.contains('on');e.target.classList.toggle('on',on);lblR.domElement.style.display=on?'':'none';};
+let demo=true; bDemo.onclick=e=>{demo=!demo;e.target.classList.toggle('on',demo);e.target.textContent=demo?'▶ Demo':'⏸ Demo';
+  person.visible=demo;trk.visible=demo;trkDot.visible=demo;};
+let exploded=false; bExplode.onclick=e=>{exploded=!exploded;e.target.classList.toggle('on',exploded);e.target.textContent=exploded?'Złóż':'Rozłóż';};
+bReset.onclick=()=>{camera.position.copy(CAM0);controls.target.set(0,-30,0);};
+bBatt.onclick=e=>{const on=!e.target.classList.contains('on');e.target.classList.toggle('on',on);
+  battery.visible=on; battLabels.forEach(l=>l.visible=on); document.getElementById('calc').style.display=on?'':'none';};
+bVent.onclick=e=>{const on=!e.target.classList.contains('on');e.target.classList.toggle('on',on);
+  vents.visible=on; ventLabels.forEach(l=>l.visible=on);};
+
+// accordion
+document.querySelectorAll('.acc-head').forEach(h=>h.onclick=()=>h.parentElement.classList.toggle('open'));
+// panel toggles (mobile-friendly)
+const descP=document.getElementById('desc'), statusP=document.getElementById('status');
+document.getElementById('tDesc').onclick=e=>{e.target.classList.toggle('on');descP.classList.toggle('hidden');};
+document.getElementById('tStatus').onclick=e=>{e.target.classList.toggle('on');statusP.classList.toggle('hidden');};
+// na telefonie panele domyślnie zwinięte
+if(matchMedia('(max-width:760px)').matches){
+  descP.classList.add('hidden'); document.getElementById('tDesc').classList.remove('on');
+}
+
+// status els
+const sPres=document.getElementById('sPres'),sZone=document.getElementById('sZone'),
+      sCnt=document.getElementById('sCnt'),sXY=document.getElementById('sXY');
+
+// animate
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const t=clock.getElapsedTime();
+  explodable.forEach(o=>o.mesh.position.lerp(exploded?o.base.clone().add(o.dir.clone().multiplyScalar(20)):o.base,.12));
+  if(demo){
+    const px=Math.sin(t*0.45)*95, pz=Math.cos(t*0.3)*28;
+    person.position.set(px,FLOOR,pz);
+    const headTop=new THREE.Vector3(px,FLOOR+36,pz);
+    trk.geometry.setFromPoints([new THREE.Vector3(0,apexY,0),headTop]); trkDot.position.copy(headTop);
+    let zi=-1; zones.forEach((z,i)=>{const ins=Math.abs(px-z.x)<z.half; z.mesh.material.emissiveIntensity=ins?0.6:0; if(ins)zi=i;});
+    const present=Math.hypot(px,pz)<150;
+    sPres.textContent=present?'WYKRYTO':'BRAK'; sPres.className='pill '+(present?'yes':'no');
+    sZone.textContent=zi>=0?('Strefa '+(zi+1)):'—';
+    sCnt.textContent=present?'1':'0';
+    sXY.textContent=present?(Math.round(px)+' / '+Math.round(pz)+' cm'):'— / —';
+    trkMat.opacity=present?0.85:0; trkDot.visible=present;
+  }
+  controls.update(); renderer.render(scene,camera); lblR.render(scene,camera);
+}
+animate();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); lblR.setSize(innerWidth,innerHeight);});
+</script>
+</body>
+</html>
